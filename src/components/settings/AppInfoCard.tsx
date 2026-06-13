@@ -5,8 +5,7 @@ import { Card, CardBody, CardHeader, CardTitle } from "@/components/selia/card";
 import { Button } from "@/components/selia/button";
 import { getDbFilePath, getTransactionCount } from "@/lib/db";
 import { formatNumber } from "@/lib/formatters";
-
-const APP_VERSION = "v1.0.3";
+import { useAppVersion } from "@/hooks/useAppVersion";
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -16,6 +15,7 @@ function formatBytes(bytes: number): string {
 }
 
 export function AppInfoCard() {
+  const appVersion = useAppVersion();
   const [dbPath, setDbPath] = useState("");
   const [dbSize, setDbSize] = useState<number | null>(null);
   const [txCount, setTxCount] = useState<number | null>(null);
@@ -44,7 +44,7 @@ export function AppInfoCard() {
       <CardBody className="space-y-3 text-sm">
         <div className="flex items-center justify-between">
           <span className="text-muted">Version</span>
-          <span>{APP_VERSION}</span>
+          <span>{appVersion ? `v${appVersion}` : "—"}</span>
         </div>
         <div className="flex items-center justify-between gap-3">
           <span className="text-muted">Database Path</span>

@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useImportStore } from "@/store/importStore";
+import { useAppVersion } from "@/hooks/useAppVersion";
 
 const NAV_ITEMS = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -20,8 +21,6 @@ const NAV_ITEMS = [
   { to: "/settings", label: "Settings", icon: Settings },
 ];
 
-const APP_VERSION = "v1.0.3";
-
 interface SidebarProps {
   collapsed: boolean;
   onToggle: () => void;
@@ -29,6 +28,7 @@ interface SidebarProps {
 
 export function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const location = useLocation();
+  const appVersion = useAppVersion();
   const wizardStep = useImportStore((s) => s.step);
   const isImporting = useImportStore((s) => s.isImporting);
   const showResumeBanner = wizardStep > 1 && wizardStep < 4 && location.pathname !== "/import";
@@ -44,7 +44,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
         {!collapsed && (
           <div className="overflow-hidden">
             <div className="truncate text-sm font-semibold text-white">MPRetention</div>
-            <div className="text-xs text-[#94A3B8]">{APP_VERSION}</div>
+            <div className="text-xs text-[#94A3B8]">{appVersion ? `v${appVersion}` : ""}</div>
           </div>
         )}
       </div>

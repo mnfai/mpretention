@@ -23,9 +23,19 @@ const TIKTOK_EXPORT_FORMAT = /^(\d{2})\/(\d{2})\/(\d{4}) (\d{2}:\d{2}:\d{2})$/;
  * dates as platform-specific strings.
  */
 export function normalizeDate(raw: unknown, platform: Platform): string {
+  // Handle null/undefined/empty
+  if (raw === null || raw === undefined || String(raw).trim() === "") {
+    return "1970-01-01 00:00:00"; // fallback for missing dates
+  }
+
   if (typeof raw === "number") {
-    const d = XLSX.SSF.parse_date_code(raw) as SSFDate;
-    return `${d.y}-${pad(d.m)}-${pad(d.d)} ${pad(d.H)}:${pad(d.M)}:${pad(Math.round(d.S))}`;
+    try {
+      const d = XLSX.SSF.parse_date_code(raw) as SSFDate;
+      if (!d || !d.y) return "1970-01-01 00:00:00";
+      return `${d.y}-${pad(d.m)}-${pad(d.d)} ${pad(d.H)}:${pad(d.M)}:${pad(Math.round(d.S))}`;
+    } catch {
+      return "1970-01-01 00:00:00";
+    }
   }
 
   const value = String(raw ?? "").trim();
@@ -33,7 +43,7 @@ export function normalizeDate(raw: unknown, platform: Platform): string {
   if (platform === "Shopee") {
     // "YYYY-MM-DD HH:mm" -> "YYYY-MM-DD HH:mm:00"
     const match = value.match(SHOPEE_EXPORT_FORMAT);
-    return match ? `${match[1]}:00` : value;
+    return match ? `${match[1]}:00` : "1970-01-01 00:00:00";
   }
 
   // TikTok export: "DD/MM/YYYY HH:mm:ss" -> "YYYY-MM-DD HH:mm:ss"
@@ -42,5 +52,7 @@ export function normalizeDate(raw: unknown, platform: Platform): string {
     const [, dd, mm, yyyy, time] = match;
     return `${yyyy}-${mm}-${dd} ${time}`;
   }
-  return value;
+
+  // Last resort: return fallback instead of raw unparseable value
+  return "1970-01-01 00:00:00";
 }

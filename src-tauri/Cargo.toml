@@ -1,6 +1,6 @@
 [package]
 name = "mpretention"
-version = "1.0.3"
+version = "1.0.7"
 description = "MPRetention - Marketplace transaction analytics for Sinergi Group"
 authors = ["Sinergi Group"]
 edition = "2021"
@@ -25,4 +25,5 @@ serde_json = "1"
 tauri-plugin-sql = { version = "2.4.0", features = ["sqlite"] }
 tauri-plugin-fs = "2.5.1"
 tauri-plugin-dialog = "2.7.1"
+calamine = "0.24"
 

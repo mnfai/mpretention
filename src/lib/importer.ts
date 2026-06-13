@@ -1,6 +1,12 @@
-import * as XLSX from "xlsx";
+import { invoke } from "@tauri-apps/api/core";
 import { normalizeDate } from "./dateNormalizer";
 import type { Brand, Platform, SourceType, Transaction } from "./types";
+
+/** Raw sheet data returned by the `parse_xlsx_backend` Rust command. */
+interface ParsedSheet {
+  sheetName: string;
+  rows: unknown[][];
+}
 
 export interface FileProfile {
   platform: Platform;
@@ -173,23 +179,25 @@ function parseMoney(value: unknown, isThousands: boolean): number | null {
 }
 
 /**
- * Reads an .xlsx file, detects its profile and normalizes every valid row
- * into a Transaction ready for insertion via db.ts.
+ * Reads an .xlsx file via the Rust backend (calamine), detects its profile
+ * and normalizes every valid row into a Transaction ready for insertion via
+ * db.ts. Parsing happens entirely outside the WebView so large (8MB+) files
+ * no longer hang or OOM the JS heap.
  */
-export async function parseImportFile(file: File, brand: Brand): Promise<ParsedFile> {
-  const buffer = await file.arrayBuffer();
-  const workbook = XLSX.read(buffer, { type: "array", cellDates: false });
-  const sheet = workbook.Sheets[workbook.SheetNames[0]];
+export async function parseImportFile(path: string, brand: Brand): Promise<ParsedFile> {
+  const { sheetName, rows } = await invoke<ParsedSheet>("parse_xlsx_backend", { path });
 
-  const headerRow = (XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true })[0] ??
-    []) as unknown[];
+  const headerRow = rows[0] ?? [];
   const headers = headerRow.map((h) => String(h ?? ""));
-  const dataRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
-    defval: null,
-    raw: true,
+  const dataRows: Record<string, unknown>[] = rows.slice(1).map((row) => {
+    const obj: Record<string, unknown> = {};
+    headers.forEach((header, i) => {
+      obj[header] = row[i] ?? null;
+    });
+    return obj;
   });
 
-  const profile = detectFileProfile(headers, dataRows, workbook.SheetNames[0]);
+  const profile = detectFileProfile(headers, dataRows, sheetName);
   const columnMap = getColumnMap(profile);
 
   const transactions: Transaction[] = [];
@@ -203,7 +211,7 @@ export async function parseImportFile(file: File, brand: Brand): Promise<ParsedF
       skippedRows++;
       continue;
     }
-    if (profile.platform === "TikTokShop" && !/^\d+$/.test(orderId)) {
+    if (profile.platform === "TikTokShop" && orderId.length < 5) {
       skippedRows++;
       continue;
     }

@@ -1,5 +1,7 @@
-import { useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { FileSpreadsheet, Loader2, UploadCloud, X } from "lucide-react";
+import { open } from "@tauri-apps/plugin-dialog";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { cn } from "@/lib/utils";
 import { estimateImportSeconds } from "@/hooks/useImport";
 import type { UploadedFile } from "@/hooks/useImport";
@@ -11,7 +13,7 @@ interface Step2UploadProps {
   error: string | null;
   isParsing: boolean;
   parsingMessage: string;
-  onAddFiles: (files: FileList | File[]) => void;
+  onAddFiles: (paths: string[]) => void;
   onRemoveFile: (index: number) => void;
 }
 
@@ -29,27 +31,50 @@ export function Step2Upload({
   onRemoveFile,
 }: Step2UploadProps) {
   const [isDragOver, setIsDragOver] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
   const multiple = platform === "Shopee";
   const totalRows = files.reduce((sum, f) => sum + f.parsed.transactions.length, 0);
 
-  function handleDrop(e: React.DragEvent<HTMLDivElement>) {
-    e.preventDefault();
-    setIsDragOver(false);
+  async function handleBrowse() {
     if (isParsing) return;
-    if (e.dataTransfer.files.length > 0) onAddFiles(e.dataTransfer.files);
+    const selected = await open({
+      multiple,
+      filters: [{ name: "Excel", extensions: ["xlsx"] }],
+    });
+    if (!selected) return;
+    onAddFiles(Array.isArray(selected) ? selected : [selected]);
   }
+
+  // Tauri intercepts native OS drag-and-drop, so the HTML5 DataTransfer API
+  // never receives files — we get real file paths from this event instead.
+  useEffect(() => {
+    const unlistenPromise = getCurrentWebview().onDragDropEvent((event) => {
+      if (isParsing) return;
+      switch (event.payload.type) {
+        case "enter":
+        case "over":
+          setIsDragOver(true);
+          break;
+        case "leave":
+          setIsDragOver(false);
+          break;
+        case "drop": {
+          setIsDragOver(false);
+          const paths = event.payload.paths.filter((p) => p.toLowerCase().endsWith(".xlsx"));
+          if (paths.length > 0) onAddFiles(multiple ? paths : paths.slice(0, 1));
+          break;
+        }
+      }
+    });
+
+    return () => {
+      unlistenPromise.then((unlisten) => unlisten());
+    };
+  }, [isParsing, multiple, onAddFiles]);
 
   return (
     <div className="space-y-4">
       <div
-        onClick={() => !isParsing && inputRef.current?.click()}
-        onDragOver={(e) => {
-          e.preventDefault();
-          if (!isParsing) setIsDragOver(true);
-        }}
-        onDragLeave={() => setIsDragOver(false)}
-        onDrop={handleDrop}
+        onClick={handleBrowse}
         className={cn(
           "flex min-h-[200px] cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed text-center transition-colors",
           isDragOver ? "border-primary bg-primary/5" : "border-border hover:border-dimmed",
@@ -73,18 +98,6 @@ export function Step2Upload({
             </div>
           </>
         )}
-        <input
-          ref={inputRef}
-          type="file"
-          accept=".xlsx"
-          multiple={multiple}
-          disabled={isParsing}
-          className="hidden"
-          onChange={(e) => {
-            if (e.target.files) onAddFiles(e.target.files);
-            e.target.value = "";
-          }}
-        />
       </div>
 
       {error && <div className="rounded-lg bg-danger/15 px-4 py-3 text-sm text-danger">{error}</div>}
