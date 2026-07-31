@@ -1,5 +1,9 @@
-import { Card, CardBody, CardHeader, CardTitle } from "@/components/selia/card";
-import { Switch } from "@/components/selia/switch";
+import { Card } from "@astryxdesign/core/Card";
+import { VStack } from "@astryxdesign/core/VStack";
+import { HStack } from "@astryxdesign/core/HStack";
+import { Heading } from "@astryxdesign/core/Heading";
+import { Text } from "@astryxdesign/core/Text";
+import { Switch } from "@astryxdesign/core/Switch";
 import { useFilterStore } from "@/store/filterStore";
 
 const DESCRIPTIONS = {
@@ -12,21 +16,21 @@ export function GmvModeCard() {
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>GMV Default Mode</CardTitle>
-      </CardHeader>
-      <CardBody>
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <div className="text-sm font-medium">{gmvMode === "gross" ? "Gross" : "Net"}</div>
-            <div className="text-xs text-muted">{DESCRIPTIONS[gmvMode]}</div>
-          </div>
+      <VStack gap={3}>
+        <Heading level={3}>GMV Default Mode</Heading>
+        <HStack gap={4} justify="between" align="center">
+          <VStack gap={0.5}>
+            <Text type="label">{gmvMode === "gross" ? "Gross" : "Net"}</Text>
+            <Text type="supporting">{DESCRIPTIONS[gmvMode]}</Text>
+          </VStack>
           <Switch
-            checked={gmvMode === "net"}
-            onCheckedChange={(checked) => setGmvMode(checked ? "net" : "gross")}
+            label="Use net GMV"
+            isLabelHidden
+            value={gmvMode === "net"}
+            onChange={(checked) => setGmvMode(checked ? "net" : "gross")}
           />
-        </div>
-      </CardBody>
+        </HStack>
+      </VStack>
     </Card>
   );
 }

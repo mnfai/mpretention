@@ -11,8 +11,10 @@
     "sql:allow-load",
     "dialog:allow-open",
     "dialog:allow-save",
+    "dialog:allow-message",
     "fs:allow-copy-file",
     "fs:allow-exists",
+    "fs:allow-size",
     "fs:allow-stat",
     "fs:allow-remove",
     "fs:allow-rename",
@@ -21,9 +23,11 @@
     {
       "identifier": "fs:scope",
       "allow": [
+        { "path": "$APPCONFIG/**" },
         { "path": "$APPDATA/**" },
         { "path": "$APPLOCALDATA/**" },
-        { "path": "$HOME/**" }
+        { "path": "$HOME/**" },
+        { "path": "**" }
       ]
     }
   ]

@@ -32,7 +32,7 @@ export default function RetentionPage() {
         <CardHeader>
           <CardTitle>Daily Retention</CardTitle>
           <CardHeaderAction>
-            <RetentionExportButton rows={data} />
+            <RetentionExportButton rows={data} brand={brand} />
           </CardHeaderAction>
         </CardHeader>
         <CardBody className="p-0">

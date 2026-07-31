@@ -15,6 +15,12 @@ export default defineConfig(async () => ({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      // Workaround: @astryxdesign/core's published dist ships components compiled
+      // with the dev-mode automatic JSX transform (calls jsxDEV directly). React's
+      // production build stubs jsxDEV to undefined, so those calls crash at runtime
+      // ("jsxDEV is not a function"). Shim it with a plain createElement-based
+      // implementation that has no process.env branch, so it works in every build mode.
+      "react/jsx-dev-runtime": path.resolve(__dirname, "src/shims/jsx-dev-runtime.ts"),
     },
   },
 

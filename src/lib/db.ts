@@ -1,5 +1,5 @@
 import Database from "@tauri-apps/plugin-sql";
-import { appDataDir, join } from "@tauri-apps/api/path";
+import { appConfigDir, join } from "@tauri-apps/api/path";
 import { runMigrations } from "./migrations";
 import { resolveCustomerBatch } from "./customerResolver";
 import type { ExistingCustomer, NewCustomerRecord } from "./customerResolver";
@@ -45,7 +45,7 @@ export async function closeDb(): Promise<void> {
 
 /** Absolute path to the SQLite database file on disk. */
 export async function getDbFilePath(): Promise<string> {
-  const dir = await appDataDir();
+  const dir = await appConfigDir();
   return join(dir, DB_FILENAME);
 }
 

@@ -36,7 +36,7 @@ export default function DashboardPage() {
         <CardHeader>
           <CardTitle>Daily Summary</CardTitle>
           <CardHeaderAction>
-            <ExportButton rows={data} />
+            <ExportButton rows={data} brand={brand} />
           </CardHeaderAction>
         </CardHeader>
         <CardBody className="p-0">

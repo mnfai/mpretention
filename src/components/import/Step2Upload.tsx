@@ -1,9 +1,17 @@
-import { useRef, useState } from "react";
+import { useState } from "react";
+import { open } from "@tauri-apps/plugin-dialog";
+import { readFile } from "@tauri-apps/plugin-fs";
 import { FileSpreadsheet, Loader2, UploadCloud, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { estimateImportSeconds } from "@/hooks/useImport";
 import type { UploadedFile } from "@/hooks/useImport";
 import type { Platform } from "@/lib/types";
+
+const XLSX_FILTER = [{ name: "Excel", extensions: ["xlsx"] }];
+
+function pathToFileName(path: string): string {
+  return path.split(/[\\/]/).pop() ?? path;
+}
 
 interface Step2UploadProps {
   platform: Platform;
@@ -29,7 +37,6 @@ export function Step2Upload({
   onRemoveFile,
 }: Step2UploadProps) {
   const [isDragOver, setIsDragOver] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
   const multiple = platform === "Shopee";
   const totalRows = files.reduce((sum, f) => sum + f.parsed.transactions.length, 0);
 
@@ -40,10 +47,24 @@ export function Step2Upload({
     if (e.dataTransfer.files.length > 0) onAddFiles(e.dataTransfer.files);
   }
 
+  async function handleBrowse() {
+    if (isParsing) return;
+    const selected = await open({ multiple, filters: XLSX_FILTER });
+    if (!selected) return;
+    const paths = Array.isArray(selected) ? selected : [selected];
+    const picked = await Promise.all(
+      paths.map(async (path) => {
+        const data = await readFile(path);
+        return new File([data], pathToFileName(path));
+      }),
+    );
+    onAddFiles(picked);
+  }
+
   return (
     <div className="space-y-4">
       <div
-        onClick={() => !isParsing && inputRef.current?.click()}
+        onClick={handleBrowse}
         onDragOver={(e) => {
           e.preventDefault();
           if (!isParsing) setIsDragOver(true);
@@ -73,18 +94,6 @@ export function Step2Upload({
             </div>
           </>
         )}
-        <input
-          ref={inputRef}
-          type="file"
-          accept=".xlsx"
-          multiple={multiple}
-          disabled={isParsing}
-          className="hidden"
-          onChange={(e) => {
-            if (e.target.files) onAddFiles(e.target.files);
-            e.target.value = "";
-          }}
-        />
       </div>
 
       {error && <div className="rounded-lg bg-danger/15 px-4 py-3 text-sm text-danger">{error}</div>}

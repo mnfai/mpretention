@@ -1,7 +1,7 @@
 {
   "name": "mpretention",
   "private": true,
-  "version": "1.0.3",
+  "version": "1.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,6 +10,8 @@
     "tauri": "tauri"
   },
   "dependencies": {
+    "@astryxdesign/core": "^0.1.5",
+    "@astryxdesign/theme-neutral": "^0.1.5",
     "@base-ui/react": "^1.5.0",
     "@tailwindcss/vite": "^4.3.0",
     "@tauri-apps/api": "^2",
@@ -30,6 +32,7 @@
     "zustand": "^5.0.14"
   },
   "devDependencies": {
+    "@astryxdesign/cli": "^0.1.5",
     "@tauri-apps/cli": "^2",
     "@types/node": "^25.9.3",
     "@types/react": "^19.1.8",

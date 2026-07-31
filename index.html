@@ -2,9 +2,41 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <link rel="icon" type="image/png" href="/icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Tauri + React + Typescript</title>
+    <script>
+      window.__earlyErrors = [];
+      function renderDiagnostics() {
+        var report =
+          window.__earlyErrors.length > 0
+            ? window.__earlyErrors.join("\n---\n")
+            : "no early errors captured; root children=" +
+              (document.getElementById("root") ? document.getElementById("root").children.length : "no-root");
+        var box = document.createElement("pre");
+        box.style.cssText =
+          "position:fixed;inset:0;z-index:999999;background:#111;color:#0f0;padding:16px;" +
+          "font:12px monospace;white-space:pre-wrap;overflow:auto;margin:0;";
+        box.textContent = report;
+        document.body.appendChild(box);
+      }
+      window.addEventListener("error", function (e) {
+        window.__earlyErrors.push("error: " + ((e.error && e.error.stack) || e.message));
+        renderDiagnostics();
+      });
+      window.addEventListener("unhandledrejection", function (e) {
+        window.__earlyErrors.push(
+          "unhandledrejection: " + ((e.reason && e.reason.stack) || e.reason),
+        );
+        renderDiagnostics();
+      });
+      window.addEventListener("load", function () {
+        setTimeout(function () {
+          var root = document.getElementById("root");
+          if (!root || root.children.length === 0) renderDiagnostics();
+        }, 1500);
+      });
+    </script>
   </head>
 
   <body>

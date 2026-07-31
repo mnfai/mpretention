@@ -1,18 +1,20 @@
 import * as XLSX from "xlsx";
+import { format } from "date-fns";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeFile } from "@tauri-apps/plugin-fs";
 import { Download } from "lucide-react";
 import { Button } from "@/components/selia/button";
 import { formatDate } from "@/lib/formatters";
-import type { DailyRetentionRow } from "@/lib/types";
+import type { BrandFilter, DailyRetentionRow } from "@/lib/types";
 
 const HEADERS = ["Date", "Product Sold", "Total Transaction", "GMV Retention", "AOV", "RPU"];
 
 interface RetentionExportButtonProps {
   rows: DailyRetentionRow[];
+  brand: BrandFilter;
 }
 
-export function RetentionExportButton({ rows }: RetentionExportButtonProps) {
+export function RetentionExportButton({ rows, brand }: RetentionExportButtonProps) {
   async function handleExport() {
     const body = rows.map((row) => [
       formatDate(row.date),
@@ -28,8 +30,9 @@ export function RetentionExportButton({ rows }: RetentionExportButtonProps) {
     XLSX.utils.book_append_sheet(workbook, sheet, "Daily Retention");
     const buffer = XLSX.write(workbook, { type: "array", bookType: "xlsx" }) as ArrayBuffer;
 
+    const brandLabel = brand === "All" ? "All Brands" : brand;
     const path = await save({
-      defaultPath: "daily-retention.xlsx",
+      defaultPath: `${brandLabel} Daily Retention - ${format(new Date(), "yyyy-MM-dd")}.xlsx`,
       filters: [{ name: "Excel Workbook", extensions: ["xlsx"] }],
     });
     if (!path) return;
