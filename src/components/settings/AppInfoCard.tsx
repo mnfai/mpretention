@@ -9,8 +9,7 @@ import { Text } from "@astryxdesign/core/Text";
 import { IconButton } from "@astryxdesign/core/IconButton";
 import { getDbFilePath, getTransactionCount } from "@/lib/db";
 import { formatNumber } from "@/lib/formatters";
-
-const APP_VERSION = "v1.1.1";
+import { useAppVersion } from "@/hooks/useAppVersion";
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -29,6 +28,7 @@ function InfoRow({ label, children }: { label: string; children: React.ReactNode
 }
 
 export function AppInfoCard() {
+  const appVersion = useAppVersion();
   const [dbPath, setDbPath] = useState("");
   const [dbSize, setDbSize] = useState<number | null>(null);
   const [txCount, setTxCount] = useState<number | null>(null);
@@ -53,7 +53,7 @@ export function AppInfoCard() {
     <Card>
       <VStack gap={3}>
         <Heading level={3}>App Info</Heading>
-        <InfoRow label="Version">{APP_VERSION}</InfoRow>
+        <InfoRow label="Version">{appVersion ? `v${appVersion}` : "—"}</InfoRow>
         <InfoRow label="Database Path">
           <HStack gap={2} align="center">
             <Text type="code">{dbPath}</Text>

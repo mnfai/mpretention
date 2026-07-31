@@ -54,35 +54,38 @@ export function useImport() {
     store.setError(null);
   }
 
-  async function addFiles(fileList: FileList | File[]) {
+  async function addFiles(paths: string[]) {
     if (!brand || !platform) return;
     store.setError(null);
 
-    const incoming = Array.from(fileList);
     const parsed: UploadedFile[] = [];
 
-    store.setParsing(true, incoming.length > 1 ? `Reading file 1 of ${incoming.length}...` : "Reading file...");
+    store.setParsing(true, paths.length > 1 ? `Reading file 1 of ${paths.length}...` : "Reading file...");
     // Yield so the spinner paints before the (synchronous) XLSX parse begins.
     await new Promise((resolve) => setTimeout(resolve, 50));
 
     try {
-      for (let i = 0; i < incoming.length; i++) {
-        const file = incoming[i];
-        if (incoming.length > 1) {
-          store.setParsing(true, `Reading file ${i + 1} of ${incoming.length}...`);
+      for (let i = 0; i < paths.length; i++) {
+        const path = paths[i];
+        const name = path.split(/[\\/]/).pop() ?? path;
+        if (paths.length > 1) {
+          store.setParsing(true, `Reading file ${i + 1} of ${paths.length}...`);
           await new Promise((resolve) => setTimeout(resolve, 0));
         }
         try {
-          const parsedFile = await parseImportFile(file, brand);
+          // Parsed entirely by the Rust backend (calamine) so the WebView's
+          // XLSX/File APIs, which hang on large files, are never involved.
+          const file = new File([], name);
+          const parsedFile = await parseImportFile(path, brand);
           if (parsedFile.profile.platform !== platform) {
             store.setError(
-              `"${file.name}" looks like a ${parsedFile.profile.platform} file, but ${platform} is selected.`,
+              `"${name}" looks like a ${parsedFile.profile.platform} file, but ${platform} is selected.`,
             );
             continue;
           }
           parsed.push({ file, parsed: parsedFile });
         } catch {
-          store.setError(`"${file.name}": File format not recognized.`);
+          store.setError(`"${name}": File format not recognized.`);
         }
       }
     } finally {

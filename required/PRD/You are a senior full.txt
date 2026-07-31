@@ -1,0 +1,533 @@
+You are a senior full-stack engineer. Build a complete desktop application called MPRetention for Sinergi Group. Read every instruction carefully before writing any code.
+
+---
+
+## STEP 0 — READ ALL REFERENCE FILES FIRST
+
+Before writing a single line of code, read all files in:
+- `./required/PRD/PRD.md` — full product spec, source of truth
+- `./required/sample-existing-data/A.-Marketplace-Shopee-2026.xlsx` — historical Shopee DB (Amura)
+- `./required/sample-existing-data/A.-Marketplace-Tiktok-2026.xlsx` — historical TikTok DB (Amura)
+- `./required/sample-export-marketplace/sample export Shopee.xlsx` — fresh Shopee export
+- `./required/sample-export-marketplace/sample export Tiktok.xlsx` — fresh TikTok export
+
+Study the column names, sheet names, and value scales in all 4 xlsx files carefully. The import engine depends on understanding the exact differences between them.
+
+---
+
+## Project Info
+
+- **App name:** MPRetention
+- **Working directory:** `/home/crm-sinergi/ClaudeCode/MPRetention`
+- **Platform:** Ubuntu 26.04, fully offline desktop app
+- **Stack:** React 18 + TypeScript + Tauri v2 + Selia UI + SQLite
+
+---
+
+## STEP 1 — Bootstrap Project
+
+```bash
+npm create tauri-app@latest . -- --template react-ts
+```
+
+Then install all dependencies:
+
+```bash
+# Core
+npm install react-router-dom zustand date-fns xlsx
+
+# Tauri SQL plugin
+npm install @tauri-apps/plugin-sql
+cargo add tauri-plugin-sql --features sqlite
+
+# Selia UI — it is NOT a traditional npm package.
+# Selia works like shadcn/ui: components are copied into your codebase via CLI.
+# First, initialize Selia:
+npx selia init
+
+# Then add every component you need one by one, for example:
+npx selia add button
+npx selia add card
+npx selia add badge
+npx selia add table
+npx selia add input
+npx selia add select
+npx selia add dialog
+npx selia add switch
+npx selia add progress
+npx selia add tabs
+npx selia add separator
+npx selia add tooltip
+npx selia add dropdown-menu
+
+# Selia is built on Tailwind CSS + Base UI.
+# After npx selia init, Tailwind CSS is already configured.
+# Do NOT install shadcn/ui separately — use Selia only.
+# Selia components live in src/components/ui/ after being added.
+# You own the source — feel free to modify them.
+# Icons are embedded as inline SVGs directly inside Selia components — no icon library needed.
+# Full docs: https://selia.earth/docs/introduction
+```
+
+Configure Tauri SQL plugin in `src-tauri/tauri.conf.json`:
+```json
+{
+  "plugins": {
+    "sql": {}
+  }
+}
+```
+
+Add to `src-tauri/capabilities/default.json`:
+```json
+{
+  "permissions": ["sql:allow-execute", "sql:allow-select", "sql:allow-load"]
+}
+```
+
+---
+
+## STEP 2 — Database Setup
+
+Create `src/lib/migrations.ts`. Run this on every app start via `useEffect` in `App.tsx`:
+
+```sql
+-- Run in order on first launch
+
+CREATE TABLE IF NOT EXISTS transactions (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    brand            TEXT NOT NULL,
+    platform         TEXT NOT NULL,
+    order_id         TEXT NOT NULL,
+    order_status     TEXT NOT NULL,
+    is_cancelled     INTEGER NOT NULL DEFAULT 0,
+    created_at       TEXT NOT NULL,
+    sku              TEXT NOT NULL,
+    product_name     TEXT,
+    variation        TEXT,
+    qty              INTEGER NOT NULL DEFAULT 1,
+    price_original   REAL,
+    price_after_disc REAL,
+    gmv_gross        REAL NOT NULL,
+    total_payment    REAL,
+    warehouse        TEXT,
+    import_batch_id  INTEGER
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_tx
+ON transactions(platform, order_id, sku);
+
+CREATE TABLE IF NOT EXISTS import_log (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    brand           TEXT NOT NULL,
+    platform        TEXT NOT NULL,
+    filename        TEXT NOT NULL,
+    imported_at     TEXT NOT NULL,
+    row_count       INTEGER,
+    skipped_count   INTEGER,
+    cancelled_count INTEGER,
+    source_type     TEXT NOT NULL DEFAULT 'export',
+    gmv_mode        TEXT NOT NULL DEFAULT 'gross'
+);
+
+CREATE VIEW IF NOT EXISTS daily_summary AS
+SELECT
+    strftime('%Y', created_at) AS year,
+    strftime('%m', created_at) AS month,
+    strftime('%d', created_at) AS day,
+    brand,
+    platform,
+    SUM(CASE WHEN is_cancelled=0 THEN qty ELSE 0 END) AS product_sold,
+    COUNT(DISTINCT CASE WHEN is_cancelled=0 THEN order_id END) AS total_tx,
+    SUM(CASE WHEN is_cancelled=0 THEN gmv_gross ELSE 0 END) AS gmv_gross,
+    SUM(CASE WHEN is_cancelled=0 THEN total_payment ELSE 0 END) AS gmv_net,
+    ROUND(
+        SUM(CASE WHEN is_cancelled=0 THEN gmv_gross ELSE 0 END)
+        / NULLIF(COUNT(DISTINCT CASE WHEN is_cancelled=0 THEN order_id END), 0),
+    2) AS aov,
+    ROUND(
+        SUM(CASE WHEN is_cancelled=0 THEN gmv_gross ELSE 0 END)
+        / NULLIF(SUM(CASE WHEN is_cancelled=0 THEN qty ELSE 0 END), 0),
+    2) AS rpu,
+    COUNT(DISTINCT CASE WHEN is_cancelled=1 THEN order_id END) AS cancelled_tx,
+    ROUND(
+        COUNT(DISTINCT CASE WHEN is_cancelled=1 THEN order_id END) * 100.0
+        / NULLIF(COUNT(DISTINCT order_id), 0),
+    2) AS cancellation_rate
+FROM transactions
+GROUP BY year, month, day, brand, platform;
+```
+
+---
+
+## STEP 3 — Import Engine (`src/lib/importer.ts`)
+
+This is the most critical piece of logic. Read all 4 sample xlsx files before implementing.
+
+### Two source types exist:
+
+**Type A — Existing Database Files** (`required/sample-existing-data/`):
+- These are historical Google Spreadsheet exports, already cleaned
+- Shopee sheet name: `Sheet1`
+- Shopee GMV column: `Total Harga Produk`
+- TikTok sheet name: `Sheet1`
+- All monetary values in **full Rupiah** (e.g. `85000`, `195000`)
+- `source_type = 'existing_db'`
+
+**Type B — Fresh Marketplace Exports** (`required/sample-export-marketplace/`):
+- These are direct downloads from Shopee/TikTok Seller Center
+- Shopee sheet name: `orders` (not Sheet1)
+- Shopee GMV column: `Subtotal Pesanan` (renamed from `Total Harga Produk`)
+- TikTok: same column names as Type A
+- All monetary values in **thousands** (e.g. `85.0` = Rp 85,000) → multiply × 1000
+- `source_type = 'export'`
+
+### Column mapping per platform:
+
+**Shopee (both types):**
+```
+order_id         ← No. Pesanan
+order_status     ← Status Pesanan
+created_at       ← Waktu Pesanan Dibuat
+sku              ← Nomor Referensi SKU
+product_name     ← Nama Produk
+variation        ← Nama Variasi
+qty              ← Jumlah
+price_original   ← Harga Awal
+price_after_disc ← Harga Setelah Diskon
+gmv_gross        ← "Total Harga Produk" (Type A) OR "Subtotal Pesanan" (Type B)
+total_payment    ← Total Pembayaran
+warehouse        ← Nama Gudang
+```
+
+**TikTokShop (both types):**
+```
+order_id         ← Order ID
+order_status     ← Order Status
+created_at       ← Created Time
+sku              ← Seller SKU
+product_name     ← Product Name
+variation        ← Variation
+qty              ← Quantity
+price_original   ← SKU Unit Original Price
+gmv_gross        ← SKU Subtotal After Discount
+total_payment    ← Order Amount
+warehouse        ← Warehouse Name
+```
+
+### Detection logic (implement exactly):
+
+```typescript
+function detectFileProfile(headers: string[], rows: Record<string, unknown>[]): FileProfile {
+  const isShopee = headers.includes('No. Pesanan');
+  const isTikTok = headers.includes('Order ID') && headers.includes('Seller SKU');
+  
+  const isExistingDB = headers.includes('Total Harga Produk'); // Shopee only tell
+  const isFreshExport = headers.includes('Subtotal Pesanan');  // Shopee only tell
+  
+  // Value scale: sample first 20 non-zero GMV values
+  const gmvCol = isShopee
+    ? (isExistingDB ? 'Total Harga Produk' : 'Subtotal Pesanan')
+    : 'SKU Subtotal After Discount';
+  const sampleValues = rows
+    .slice(0, 20)
+    .map(r => Number(r[gmvCol]))
+    .filter(v => v > 0);
+  const median = calculateMedian(sampleValues);
+  const isThousands = median < 1000; // multiply × 1000 if true
+  
+  return {
+    platform: isShopee ? 'shopee' : 'tiktokshop',
+    sourceType: isExistingDB ? 'existing_db' : 'export',
+    isThousands,
+  };
+}
+```
+
+### Cancelled order detection:
+- Shopee: `Status Pesanan` value contains `"Batal"` (case-insensitive, e.g. "Batal", "Dibatalkan oleh Pembeli", "Batal otomatis")
+- TikTok: `Order Status` === `"Dibatalkan"`
+- Set `is_cancelled = 1` — STILL insert the row (needed for cancellation rate)
+
+### Insert strategy:
+- Use `INSERT OR IGNORE INTO transactions (...)` — silently skips duplicates
+- Track `inserted_count` vs `total_rows` to compute `skipped_count`
+- All monetary values stored as **full Rupiah** — normalization (×1000) happens at import time only, not at display time
+
+### Multi-file (Shopee):
+- Accept array of files in one session
+- All inserted rows share the same `import_batch_id`
+- Log one entry in `import_log` with comma-separated filenames
+
+---
+
+## STEP 4 — Formatters (`src/lib/formatters.ts`)
+
+```typescript
+// Indonesian Rupiah format: Rp 54.545.870 (dot as thousands separator, no decimals)
+export function formatRupiah(value: number | null | undefined): string {
+  if (value === null || value === undefined || isNaN(value)) return '—';
+  return 'Rp ' + Math.round(value).toLocaleString('id-ID');
+}
+
+// Percentage: 3.24%
+export function formatPercent(value: number | null | undefined): string {
+  if (value === null || value === undefined || isNaN(value)) return '—';
+  return value.toFixed(2) + '%';
+}
+
+// Date: 01 Jun 2026
+export function formatDate(dateStr: string): string {
+  return format(new Date(dateStr), 'dd MMM yyyy', { locale: id });
+}
+
+// Day only for table rows: 01, 02, ... 31
+export function formatDay(day: string): string {
+  return day.padStart(2, '0');
+}
+```
+
+---
+
+## STEP 5 — Zustand Store (`src/store/filterStore.ts`)
+
+```typescript
+interface FilterState {
+  brand: 'all' | 'amura' | 'reglow';
+  platform: 'all' | 'shopee' | 'tiktokshop';
+  gmvMode: 'gross' | 'net';
+  dateFrom: string; // ISO date string
+  dateTo: string;
+  setBrand: (v: FilterState['brand']) => void;
+  setPlatform: (v: FilterState['platform']) => void;
+  setGmvMode: (v: FilterState['gmvMode']) => void;
+  setDateRange: (from: string, to: string) => void;
+}
+// Default: brand=all, platform=all, gmvMode=gross, dateFrom=first day of current month, dateTo=today
+```
+
+---
+
+## STEP 6 — Pages & Components
+
+Build all 4 pages. Use Selia components throughout (Button, Card, Badge, Table, Input, Select, Dialog, Switch, Progress, Tabs). Since Selia components live in `src/components/ui/` after `npx selia add`, import from there.
+
+### AppShell Layout
+```
+┌──────────────────────────────────────────────────┐
+│ Sidebar 240px dark  │ TopBar 56px                │
+│ ─────────────────── │ ────────────────────────── │
+│ Logo: MPRetention   │ PAGE CONTENT (padding 24px)│
+│ version: v1.0.0     │                            │
+│                     │                            │
+│ 📊 Dashboard        │                            │
+│ 📥 Import Data      │                            │
+│ 🕐 Import History   │                            │
+│ ⚙️  Settings         │                            │
+│                     │                            │
+│ [collapse toggle]   │                            │
+└──────────────────────────────────────────────────┘
+```
+
+Sidebar colors:
+- Background: `#1E293B`
+- Inactive text: `#94A3B8`
+- Active item bg: `#334155`, left border 3px `#6366F1`, text white
+- Collapsed width: 64px (icons only)
+
+### Page 1 — Dashboard (`/dashboard`)
+
+**Filter bar** (horizontal, below TopBar):
+- Segmented control: Brand → `All` | `Amura` (violet) | `Reglow` (pink)
+- Segmented control: Platform → `All` | `Shopee` (orange) | `TikTokShop` (teal)
+- Pill toggle: GMV Mode → `Gross` / `Net` with subtext hint
+- Date range: two date inputs From–To, default current month
+
+**4 Metric summary cards** (horizontal row):
+| Card | Value | Subtext |
+|---|---|---|
+| Total GMV | formatRupiah(sum) | "Selected period" |
+| Total Transactions | count | "Unique orders" |
+| AOV | formatRupiah(avg) | "Per transaction" |
+| Cancellation Rate | formatPercent(rate) | "Of all orders" |
+
+**Daily summary table** — exact columns from PRD section 4.3:
+- `Date` | `Product Sold` | `Total TX` | `GMV` | `AOV` | `RPU` | `Cancelled TX` | `Cancellation Rate`
+- Rows = one per calendar day in selected range
+- Days with no data: show Date column only, all other cells show `—`
+- Sticky footer: totals row (bold, slightly different bg)
+- All Rupiah: `formatRupiah()`, all percents: `formatPercent()`
+- Empty values: `—` (never show `0` for missing days)
+
+**Export button**: top-right of table, exports filtered view as `.xlsx` using SheetJS
+
+### Page 2 — Import Wizard (`/import`)
+
+4-step stepper. State managed by `useImport` hook.
+
+**Step 1 — Brand & Platform:**
+- Large clickable cards for Amura (violet) and Reglow (pink)
+- Large clickable cards for Shopee (orange) and TikTokShop (teal)
+- Selected = colored border + checkmark, unselected = gray border
+- "Continue" button disabled until both selected
+
+**Step 2 — Upload Files:**
+- Drag-and-drop zone (`min-height: 200px`, dashed border)
+- Shopee: accepts multiple files. TikTok: single file.
+- On file drop: parse headers immediately, show file rows with filename + row count
+- Invalid file: red error banner "File format not recognized"
+
+**Step 3 — Column Mapping Preview:**
+- Three info badges at top:
+  - Platform detected: e.g. "Shopee" (orange badge)
+  - Source type: "Existing Database" (green) or "Fresh Export" (blue)
+  - Value scale: "Full Rupiah" (gray) or "×1000 Normalization Applied" (yellow)
+- Mapping table: File Header → Internal Field (editable dropdown) → Status (✅/⚠️)
+- Unmapped rows: amber background, warning icon, dropdown to assign manually
+- Sample data preview: first 3 rows of actual data below the mapping table
+
+**Step 4 — Import & Result:**
+- Progress bar during insert: "Processing row X of Y..."
+- Result summary card after completion:
+  ```
+  ✅ Import Complete
+  4,229 rows imported
+     12 duplicates skipped
+    147 cancelled orders flagged
+  Brand: Amura | Platform: Shopee
+  [View Dashboard] [Import More]
+  ```
+
+### Page 3 — Import History (`/history`)
+
+Table columns: `Date` | `Brand` | `Platform` | `Source Type` | `Filename(s)` | `Rows` | `Skipped` | `Cancelled` | `Actions`
+
+- Brand badge: violet (Amura), pink (Reglow)
+- Platform badge: orange (Shopee), teal (TikTokShop)
+- Source type badge: gray "Existing DB", blue "Export"
+- Multiple filenames: show first + "+N more"
+- Delete action: opens confirmation modal
+  - Modal shows row count that will be deleted
+  - Red "Delete Records" confirm button
+
+Empty state: illustration + "No imports yet" + "Import Data" CTA button
+
+### Page 4 — Settings (`/settings`)
+
+Three stacked cards:
+
+**Card 1 — App Info:**
+- Version, DB path (monospace, copyable), DB file size, total transaction count
+
+**Card 2 — GMV Default Mode:**
+- Toggle Gross/Net with description of each (linked to Zustand `gmvMode`, persisted to `localStorage`)
+
+**Card 3 — Danger Zone** (red dashed border):
+- Backup DB: copies `.db` file to user-chosen location via Tauri file dialog
+- Restore DB: replaces current DB with user-selected file
+- Reset DB: requires user to type `"RESET"` in input field to unlock the confirm button
+
+---
+
+## STEP 7 — Custom Hooks
+
+### `src/hooks/useDailySummary.ts`
+- Accepts filter params (brand, platform, gmvMode, dateFrom, dateTo)
+- Queries `daily_summary` view via `@tauri-apps/plugin-sql`
+- Generates full calendar scaffold (all days from dateFrom to dateTo)
+- Merges DB results into scaffold (days with no data = null values)
+- Returns `{ data: DailySummaryRow[], totals: SummaryTotals, isLoading: boolean }`
+
+### `src/hooks/useImport.ts`
+- State machine: `idle → step1 → step2 → step3 → importing → done`
+- Calls `importer.ts` functions at each step
+- Exposes `{ step, brand, platform, files, mapping, profile, progress, result, goNext, goBack }`
+
+### `src/hooks/useImportHistory.ts`
+- Queries `import_log` table
+- Exposes `{ history, isLoading, deleteBatch(id: number) }`
+
+---
+
+## STEP 8 — Full File Structure
+
+```
+src/
+  components/
+    layout/
+      AppShell.tsx
+      Sidebar.tsx
+      TopBar.tsx
+    dashboard/
+      FilterBar.tsx
+      MetricCard.tsx
+      SummaryTable.tsx
+      ExportButton.tsx
+    import/
+      ImportWizard.tsx
+      StepIndicator.tsx
+      Step1Brand.tsx
+      Step2Upload.tsx
+      Step3Mapping.tsx
+      Step4Result.tsx
+    history/
+      HistoryTable.tsx
+      DeleteBatchModal.tsx
+    settings/
+      AppInfoCard.tsx
+      GmvModeCard.tsx
+      DangerZoneCard.tsx
+    ui/                    ← Selia components live here after `npx selia add`
+  lib/
+    db.ts                  ← all SQLite queries
+    importer.ts            ← full import engine
+    migrations.ts          ← DB init on app start
+    formatters.ts          ← formatRupiah, formatPercent, formatDate
+  hooks/
+    useDailySummary.ts
+    useImport.ts
+    useImportHistory.ts
+  store/
+    filterStore.ts         ← Zustand
+  pages/
+    DashboardPage.tsx
+    ImportPage.tsx
+    HistoryPage.tsx
+    SettingsPage.tsx
+  router.tsx
+  App.tsx
+  main.tsx
+```
+
+---
+
+## STEP 9 — Build Order
+
+Execute in this exact order:
+1. Read all files in `./required/` completely
+2. Bootstrap Tauri + React project
+3. Run `npx selia init` then add all needed components
+4. Implement `migrations.ts` + `db.ts`
+5. Implement `importer.ts` — test mentally against all 4 xlsx samples
+6. Implement `formatters.ts` + `filterStore.ts`
+7. Build `AppShell` + `Sidebar` + routing
+8. Build `DashboardPage` with all filters, cards, table
+9. Build `ImportPage` wizard (all 4 steps)
+10. Build `HistoryPage`
+11. Build `SettingsPage`
+12. Wire all hooks and verify data flows end-to-end
+
+---
+
+## Code Quality Rules
+
+- Full TypeScript — zero `any` types
+- All SQLite queries in `src/lib/db.ts` only — no inline SQL elsewhere
+- All monetary values stored in DB as full Rupiah integers — ×1000 normalization at import time only
+- `formatRupiah()` must use Indonesian locale (dot as thousands separator): `Rp 85.000` not `Rp 85,000`
+- Division by zero always returns `null`, displayed as `—`
+- Re-importing same file is always safe — duplicates silently skipped
+- Minimum window size: 1280×800px (set in `tauri.conf.json`)
+````
+
+***
