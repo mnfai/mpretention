@@ -20,7 +20,7 @@ const NAV_ITEMS = [
   { to: "/settings", label: "Settings", icon: Settings },
 ];
 
-const APP_VERSION = "v1.1.0";
+const APP_VERSION = "v1.1.1";
 
 interface SidebarProps {
   collapsed: boolean;

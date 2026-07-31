@@ -10,7 +10,7 @@ import { IconButton } from "@astryxdesign/core/IconButton";
 import { getDbFilePath, getTransactionCount } from "@/lib/db";
 import { formatNumber } from "@/lib/formatters";
 
-const APP_VERSION = "v1.1.0";
+const APP_VERSION = "v1.1.1";
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
