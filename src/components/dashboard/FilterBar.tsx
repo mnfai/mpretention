@@ -1,7 +1,7 @@
 import { Card, CardBody } from "@/components/selia/card";
-import { Input } from "@/components/selia/input";
 import { cn } from "@/lib/utils";
 import { useFilterStore } from "@/store/filterStore";
+import { DateRangeFilter } from "./DateRangeFilter";
 import type { BrandFilter, GmvMode, PlatformFilter } from "@/lib/types";
 
 interface SegmentOption<T extends string> {
@@ -83,31 +83,9 @@ export function FilterBar() {
           <div className="text-xs text-muted">{GMV_MODE_HINT[gmvMode]}</div>
         </div>
 
-        <div className="flex items-end gap-2">
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium text-muted" htmlFor="date-from">
-              From
-            </label>
-            <Input
-              id="date-from"
-              type="date"
-              value={dateFrom}
-              max={dateTo}
-              onChange={(e) => setDateRange(e.target.value, dateTo)}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium text-muted" htmlFor="date-to">
-              To
-            </label>
-            <Input
-              id="date-to"
-              type="date"
-              value={dateTo}
-              min={dateFrom}
-              onChange={(e) => setDateRange(dateFrom, e.target.value)}
-            />
-          </div>
+        <div className="space-y-1.5">
+          <div className="text-xs font-medium text-muted">Period</div>
+          <DateRangeFilter dateFrom={dateFrom} dateTo={dateTo} onChange={setDateRange} />
         </div>
       </CardBody>
     </Card>
