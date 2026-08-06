@@ -69,10 +69,22 @@ const TX_COLUMNS = `
 const TX_PLACEHOLDERS = "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
 /**
- * Inserts rows as a single multi-row INSERT OR IGNORE statement, so the whole
- * chunk is one atomic SQLite statement (and one IPC round trip) regardless of
- * which pooled connection it runs on. Duplicates (same platform + order_id +
- * sku) are silently skipped.
+ * Inserts rows as a single multi-row UPSERT statement, so the whole chunk is
+ * one atomic SQLite statement (and one IPC round trip) regardless of which
+ * pooled connection it runs on.
+ *
+ * Re-importing a date range you've already imported (e.g. a rolling
+ * month-to-date export) is the normal workflow, and each re-export carries
+ * the order's *current* lifecycle state. A plain INSERT OR IGNORE would
+ * freeze every order's status/GMV at whatever it was on first import
+ * forever, even after it ships, gets cancelled, or gets returned — so on a
+ * duplicate (platform, order_id, sku) we instead refresh the fields that
+ * change over an order's lifecycle. customer_id/is_retention are
+ * deliberately left untouched: those are resolved once from the rows that
+ * were actually new to this import (see useImport.ts), and this insert path
+ * gets called with customer_id=0/is_retention=0 placeholders for rows that
+ * already existed before this import, which must never overwrite the real
+ * values already stored for them.
  */
 export async function insertTransactions(
   rows: ResolvedTransaction[],
@@ -109,12 +121,21 @@ export async function insertTransactions(
   ]);
 
   const result = await db.execute(
-    `INSERT OR IGNORE INTO transactions (${TX_COLUMNS}) VALUES ${placeholders}`,
+    `INSERT INTO transactions (${TX_COLUMNS}) VALUES ${placeholders}
+     ON CONFLICT(platform, order_id, sku) DO UPDATE SET
+       order_status = excluded.order_status,
+       is_cancelled = excluded.is_cancelled,
+       qty = excluded.qty,
+       price_original = excluded.price_original,
+       price_after_disc = excluded.price_after_disc,
+       gmv_gross = excluded.gmv_gross,
+       total_payment = excluded.total_payment,
+       warehouse = excluded.warehouse`,
     params,
   );
 
-  const inserted = result.rowsAffected;
-  return { inserted, skipped: rows.length - inserted };
+  const affected = result.rowsAffected;
+  return { inserted: affected, skipped: rows.length - affected };
 }
 
 /** Exact inserted/cancelled row counts for a finished import batch. */

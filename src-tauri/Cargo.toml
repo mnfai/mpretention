@@ -27,3 +27,11 @@ tauri-plugin-fs = "2.5.1"
 tauri-plugin-dialog = "2.7.1"
 calamine = "0.24"
 
+# calamine 0.24.0 parses OOXML t="str" cells (cached formula-string results) as
+# f64 first, silently losing precision for any all-digit string longer than
+# ~15-17 chars (e.g. TikTok order IDs, which are 18-19 digits) - corrupting and
+# colliding order IDs on import. Vendored fix: always treat t="str" as a string,
+# per spec. See vendor/calamine-0.24.0/src/xlsx/cells_reader.rs.
+[patch.crates-io]
+calamine = { path = "vendor/calamine-0.24.0" }
+
