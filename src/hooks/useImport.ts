@@ -1,4 +1,4 @@
-import { parseImportFile } from "@/lib/importer";
+import { detectBrandFromTransactions, parseImportFile } from "@/lib/importer";
 import {
   createImportLog,
   finalizeImportLog,
@@ -80,6 +80,17 @@ export function useImport() {
           if (parsedFile.profile.platform !== platform) {
             store.setError(
               `"${name}" looks like a ${parsedFile.profile.platform} file, but ${platform} is selected.`,
+            );
+            continue;
+          }
+          // Both marketplaces name every shop's export identically, so two
+          // brands' files are easily swapped. A swapped file imports without
+          // complaint and silently wrecks retention, so reject it here.
+          const detected = detectBrandFromTransactions(parsedFile.transactions);
+          if (detected.brand && detected.brand !== brand) {
+            const share = Math.round(detected.dominance * 100);
+            store.setError(
+              `"${name}" contains ${detected.brand} products (${share}% of ${detected.brandedRows.toLocaleString("id-ID")} rows with a brand name), but ${brand} is selected. File rejected.`,
             );
             continue;
           }

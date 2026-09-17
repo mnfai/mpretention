@@ -251,3 +251,69 @@ export async function parseImportFile(path: string, brand: Brand): Promise<Parse
     skippedRows,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Brand guard
+// ---------------------------------------------------------------------------
+
+/** Product-name keyword that identifies each brand's own catalogue. */
+const BRAND_KEYWORDS: Record<Brand, RegExp> = {
+  Amura: /amura/i,
+  Reglow: /reglow/i,
+};
+
+/** Below this many branded rows the sample is too small to judge. */
+const MIN_BRANDED_ROWS = 20;
+/** Branded rows must be at least this share of all rows to judge. */
+const MIN_BRANDED_SHARE = 0.1;
+/** One brand must own at least this share of the branded rows to be conclusive. */
+const MIN_DOMINANCE = 0.8;
+
+export interface BrandDetection {
+  /** Brand the file's products belong to, or null when inconclusive. */
+  brand: Brand | null;
+  /** Share of branded rows belonging to `brand`, 0–1. */
+  dominance: number;
+  /** Rows whose product name mentions exactly one known brand. */
+  brandedRows: number;
+  totalRows: number;
+}
+
+/**
+ * Infers which brand a parsed file actually belongs to by looking at product
+ * names, so the wizard can reject a file imported under the wrong brand.
+ *
+ * Shopee and TikTok both name the exports of every shop identically
+ * ("Order.all.<range>.xlsx", "Semua pesanan-<date>-<time>.xlsx"), so two
+ * brands' files are trivially swapped in the download folder. A swapped file
+ * imports "successfully" — the damage only shows up later as collapsed
+ * retention, because customer identity is matched per brand + platform and
+ * the other brand's buyers are all unknown.
+ *
+ * Rows mentioning both brands or neither are ignored: bundle listings and
+ * unbranded pack names carry no signal. When too few rows are branded, or no
+ * single brand dominates them, the result is inconclusive (`brand: null`) and
+ * the caller must let the import through rather than block on a guess.
+ */
+export function detectBrandFromTransactions(transactions: Transaction[]): BrandDetection {
+  const counts: Record<Brand, number> = { Amura: 0, Reglow: 0 };
+
+  for (const tx of transactions) {
+    const name = tx.product_name;
+    if (!name) continue;
+    const matched = (Object.keys(counts) as Brand[]).filter((b) => BRAND_KEYWORDS[b].test(name));
+    if (matched.length === 1) counts[matched[0]]++;
+  }
+
+  const brandedRows = counts.Amura + counts.Reglow;
+  const totalRows = transactions.length;
+  const leader: Brand = counts.Amura >= counts.Reglow ? "Amura" : "Reglow";
+  const dominance = brandedRows > 0 ? counts[leader] / brandedRows : 0;
+
+  const conclusive =
+    brandedRows >= MIN_BRANDED_ROWS &&
+    brandedRows >= totalRows * MIN_BRANDED_SHARE &&
+    dominance >= MIN_DOMINANCE;
+
+  return { brand: conclusive ? leader : null, dominance, brandedRows, totalRows };
+}
