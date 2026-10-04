@@ -3,10 +3,9 @@ import { cn } from "@/lib/utils";
 import type { ImportStep } from "@/hooks/useImport";
 
 const STEPS: { step: ImportStep; label: string }[] = [
-  { step: 1, label: "Brand & Platform" },
-  { step: 2, label: "Upload Files" },
-  { step: 3, label: "Mapping Preview" },
-  { step: 4, label: "Import" },
+  { step: 1, label: "Upload Files" },
+  { step: 2, label: "Review Brands" },
+  { step: 3, label: "Import" },
 ];
 
 interface StepIndicatorProps {

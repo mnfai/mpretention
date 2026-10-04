@@ -28,7 +28,8 @@ export function DeleteBatchModal({ entry, onClose, onConfirm }: DeleteBatchModal
           <DialogBody>
             <DialogDescription>
               This will permanently delete {entry.row_count.toLocaleString("id-ID")} transaction rows
-              imported from "{entry.filename}". This cannot be undone.
+              imported from "{entry.filename}". This cannot be undone. Run Re-run Customer Resolution
+              afterwards so repeat-order flags no longer count the deleted orders.
             </DialogDescription>
           </DialogBody>
           <DialogFooter>

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { deleteImportBatch, getImportLogs } from "@/lib/db";
+import { useUiStore } from "@/store/uiStore";
 import type { ImportLogEntry } from "@/lib/types";
 
 export function useImportHistory() {
@@ -18,6 +19,8 @@ export function useImportHistory() {
 
   async function deleteBatch(id: number) {
     await deleteImportBatch(id);
+    // Customers and is_retention were built with the deleted orders included.
+    useUiStore.getState().setResolutionStale(true);
     await refresh();
   }
 

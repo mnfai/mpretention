@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
-import { normalizeDate } from "./dateNormalizer";
-import type { Brand, Platform, SourceType, Transaction } from "./types";
+import { isTikTokTextDate, normalizeDate } from "./dateNormalizer";
+import type { Brand, ParsedRow, Platform, SourceType } from "./types";
 
 /** Raw sheet data returned by the `parse_xlsx_backend` Rust command. */
 interface ParsedSheet {
@@ -16,13 +16,29 @@ export interface FileProfile {
   headers: string[];
 }
 
+/** Why rows of a file were left out of the import, for the review screen. */
+export interface SkippedRowCounts {
+  /** Missing order id, or one that isn't a real order id (e.g. TikTok's column-description row). */
+  invalidOrderId: number;
+  /** Created time missing or not a recognised date. */
+  invalidDate: number;
+  /** Created time after today: a misread date, never a real order. */
+  futureDate: number;
+}
+
 export interface ParsedFile {
   profile: FileProfile;
-  transactions: Transaction[];
+  /** Valid rows, not yet assigned to a brand (see detectBrandFromRows). */
+  transactions: ParsedRow[];
   /** Total data rows read from the sheet (excluding the header row). */
   totalDataRows: number;
-  /** Rows skipped due to a missing/invalid order id. */
+  /** Rows skipped for any reason (sum of skippedBreakdown). */
   skippedRows: number;
+  skippedBreakdown: SkippedRowCounts;
+  /** Numeric dates whose day/month were swapped back (legacy TikTok sheets). */
+  swappedDates: number;
+  /** Earliest / latest created_at among valid rows, or null when there are none. */
+  dateRange: { from: string; to: string } | null;
 }
 
 interface ColumnMap {
@@ -178,13 +194,26 @@ function parseMoney(value: unknown, isThousands: boolean): number | null {
   return isThousands ? n * 1000 : n;
 }
 
+/** TikTok order ids are long numbers; Shopee ids are upper-case alphanumeric. */
+const ORDER_ID_FORMAT: Record<Platform, RegExp> = {
+  TikTokShop: /^\d{5,}$/,
+  Shopee: /^[0-9A-Z]{5,}$/,
+};
+
+/** Latest acceptable created_at: end of today in local time ("YYYY-MM-DD 23:59:59"). */
+function endOfTodayStamp(): string {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} 23:59:59`;
+}
+
 /**
  * Reads an .xlsx file via the Rust backend (calamine), detects its profile
- * and normalizes every valid row into a Transaction ready for insertion via
- * db.ts. Parsing happens entirely outside the WebView so large (8MB+) files
- * no longer hang or OOM the JS heap.
+ * and normalizes every valid row, ready to be assigned a brand and inserted
+ * via db.ts. Parsing happens entirely outside the WebView so large (8MB+)
+ * files no longer hang or OOM the JS heap.
  */
-export async function parseImportFile(path: string, brand: Brand): Promise<ParsedFile> {
+export async function parseImportFile(path: string): Promise<ParsedFile> {
   const { sheetName, rows } = await invoke<ParsedSheet>("parse_xlsx_backend", { path });
 
   const headerRow = rows[0] ?? [];
@@ -200,31 +229,51 @@ export async function parseImportFile(path: string, brand: Brand): Promise<Parse
   const profile = detectFileProfile(headers, dataRows, sheetName);
   const columnMap = getColumnMap(profile);
 
-  const transactions: Transaction[] = [];
-  let skippedRows = 0;
+  // A legacy TikTok sheet that mixes "DD/MM/YYYY" text with Excel dates had
+  // its day-1..12 dates converted with day and month swapped.
+  const swapNumericDayMonth =
+    profile.platform === "TikTokShop" &&
+    dataRows.some((row) => isTikTokTextDate(row[columnMap.created_at])) &&
+    dataRows.some((row) => typeof row[columnMap.created_at] === "number");
+
+  const transactions: ParsedRow[] = [];
+  const skipped: SkippedRowCounts = { invalidOrderId: 0, invalidDate: 0, futureDate: 0 };
+  let swappedDates = 0;
+  let minDate: string | null = null;
+  let maxDate: string | null = null;
+  const latestAllowed = endOfTodayStamp();
 
   for (const row of dataRows) {
     const rawOrderId = row[columnMap.order_id];
     const orderId = rawOrderId === null || rawOrderId === undefined ? "" : String(rawOrderId).trim();
 
-    if (orderId === "") {
-      skippedRows++;
+    if (!ORDER_ID_FORMAT[profile.platform].test(orderId)) {
+      skipped.invalidOrderId++;
       continue;
     }
-    if (profile.platform === "TikTokShop" && orderId.length < 5) {
-      skippedRows++;
+
+    const rawDate = row[columnMap.created_at];
+    const createdAt = normalizeDate(rawDate, profile.platform, { swapNumericDayMonth });
+    if (createdAt === null) {
+      skipped.invalidDate++;
       continue;
     }
+    if (createdAt > latestAllowed) {
+      skipped.futureDate++;
+      continue;
+    }
+    if (swapNumericDayMonth && typeof rawDate === "number") swappedDates++;
+    if (minDate === null || createdAt < minDate) minDate = createdAt;
+    if (maxDate === null || createdAt > maxDate) maxDate = createdAt;
 
     const orderStatus = String(row[columnMap.order_status] ?? "");
 
     transactions.push({
-      brand,
       platform: profile.platform,
       order_id: orderId,
       order_status: orderStatus,
       is_cancelled: isCancelledRow(profile.platform, orderStatus),
-      created_at: normalizeDate(row[columnMap.created_at], profile.platform),
+      created_at: createdAt,
       sku: String(row[columnMap.sku] ?? ""),
       product_name: nullableString(row[columnMap.product_name]),
       variation: nullableString(row[columnMap.variation]),
@@ -248,7 +297,10 @@ export async function parseImportFile(path: string, brand: Brand): Promise<Parse
     profile,
     transactions,
     totalDataRows: dataRows.length,
-    skippedRows,
+    skippedRows: skipped.invalidOrderId + skipped.invalidDate + skipped.futureDate,
+    skippedBreakdown: skipped,
+    swappedDates,
+    dateRange: minDate && maxDate ? { from: minDate, to: maxDate } : null,
   };
 }
 
@@ -270,9 +322,15 @@ const MIN_BRANDED_SHARE = 0.1;
 const MIN_DOMINANCE = 0.8;
 
 export interface BrandDetection {
-  /** Brand the file's products belong to, or null when inconclusive. */
+  /**
+   * detected: one brand clearly owns the file.
+   * mixed: plenty of branded rows but no brand dominates (both brands' orders in one file) — reject.
+   * unknown: too few branded rows to judge — the user must pick the brand.
+   */
+  status: "detected" | "mixed" | "unknown";
+  /** Brand the file's products belong to, or null unless status is "detected". */
   brand: Brand | null;
-  /** Share of branded rows belonging to `brand`, 0–1. */
+  /** Share of branded rows belonging to the leading brand, 0–1. */
   dominance: number;
   /** Rows whose product name mentions exactly one known brand. */
   brandedRows: number;
@@ -280,8 +338,8 @@ export interface BrandDetection {
 }
 
 /**
- * Infers which brand a parsed file actually belongs to by looking at product
- * names, so the wizard can reject a file imported under the wrong brand.
+ * Infers which brand a parsed file belongs to by looking at product names, so
+ * the import never relies on the user picking the right brand.
  *
  * Shopee and TikTok both name the exports of every shop identically
  * ("Order.all.<range>.xlsx", "Semua pesanan-<date>-<time>.xlsx"), so two
@@ -291,29 +349,25 @@ export interface BrandDetection {
  * the other brand's buyers are all unknown.
  *
  * Rows mentioning both brands or neither are ignored: bundle listings and
- * unbranded pack names carry no signal. When too few rows are branded, or no
- * single brand dominates them, the result is inconclusive (`brand: null`) and
- * the caller must let the import through rather than block on a guess.
+ * unbranded pack names carry no signal.
  */
-export function detectBrandFromTransactions(transactions: Transaction[]): BrandDetection {
+export function detectBrandFromRows(rows: ReadonlyArray<{ product_name: string | null }>): BrandDetection {
   const counts: Record<Brand, number> = { Amura: 0, Reglow: 0 };
 
-  for (const tx of transactions) {
-    const name = tx.product_name;
+  for (const row of rows) {
+    const name = row.product_name;
     if (!name) continue;
     const matched = (Object.keys(counts) as Brand[]).filter((b) => BRAND_KEYWORDS[b].test(name));
     if (matched.length === 1) counts[matched[0]]++;
   }
 
   const brandedRows = counts.Amura + counts.Reglow;
-  const totalRows = transactions.length;
+  const totalRows = rows.length;
   const leader: Brand = counts.Amura >= counts.Reglow ? "Amura" : "Reglow";
   const dominance = brandedRows > 0 ? counts[leader] / brandedRows : 0;
 
-  const conclusive =
-    brandedRows >= MIN_BRANDED_ROWS &&
-    brandedRows >= totalRows * MIN_BRANDED_SHARE &&
-    dominance >= MIN_DOMINANCE;
-
-  return { brand: conclusive ? leader : null, dominance, brandedRows, totalRows };
+  const enoughSignal = brandedRows >= MIN_BRANDED_ROWS && brandedRows >= totalRows * MIN_BRANDED_SHARE;
+  if (!enoughSignal) return { status: "unknown", brand: null, dominance, brandedRows, totalRows };
+  if (dominance < MIN_DOMINANCE) return { status: "mixed", brand: null, dominance, brandedRows, totalRows };
+  return { status: "detected", brand: leader, dominance, brandedRows, totalRows };
 }

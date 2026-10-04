@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { format } from "date-fns";
 import { open, save, message } from "@tauri-apps/plugin-dialog";
-import { copyFile } from "@tauri-apps/plugin-fs";
+import { copyFile, exists, remove } from "@tauri-apps/plugin-fs";
 import { Card } from "@astryxdesign/core/Card";
 import { VStack } from "@astryxdesign/core/VStack";
 import { HStack } from "@astryxdesign/core/HStack";
@@ -10,7 +10,7 @@ import { Text } from "@astryxdesign/core/Text";
 import { Button } from "@astryxdesign/core/Button";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import { Divider } from "@astryxdesign/core/Divider";
-import { closeDb, getDb, getDbFilePath, resetDatabase } from "@/lib/db";
+import { backupDatabaseTo, closeDb, getDb, getDbFilePath, resetDatabase } from "@/lib/db";
 
 const DB_FILTER = [{ name: "SQLite Database", extensions: ["db"] }];
 
@@ -18,14 +18,16 @@ export function DangerZoneCard() {
   const [resetInput, setResetInput] = useState("");
 
   async function handleBackup() {
-    const dbPath = await getDbFilePath();
     const dest = await save({
       defaultPath: `MP Retention Backup - ${format(new Date(), "yyyy-MM-dd")}.db`,
       filters: DB_FILTER,
     });
     if (!dest) return;
     try {
-      await copyFile(dbPath, dest);
+      // VACUUM INTO refuses to overwrite; the save dialog already confirmed replacing it.
+      if (await exists(dest)) await remove(dest);
+      await backupDatabaseTo(dest);
+      await message("Backup saved.", { kind: "info" });
     } catch (err) {
       await message(`Backup failed: ${err}`, { kind: "error" });
     }
@@ -37,6 +39,10 @@ export function DangerZoneCard() {
     const dbPath = await getDbFilePath();
     try {
       await closeDb();
+      // Leftover WAL/SHM files belong to the old database; never replay them onto the backup.
+      for (const suffix of ["-wal", "-shm"]) {
+        if (await exists(dbPath + suffix)) await remove(dbPath + suffix);
+      }
       await copyFile(selected, dbPath);
       await getDb();
       window.location.reload();
@@ -58,7 +64,7 @@ export function DangerZoneCard() {
         <HStack gap={4} justify="between" align="center">
           <VStack gap={0.5}>
             <Text type="label">Backup Database</Text>
-            <Text type="supporting">Save a copy of the current database file.</Text>
+            <Text type="supporting">Save a consistent snapshot of the current database.</Text>
           </VStack>
           <Button label="Backup" variant="secondary" onClick={handleBackup} />
         </HStack>
@@ -79,7 +85,7 @@ export function DangerZoneCard() {
           <VStack gap={0.5}>
             <Text type="label">Reset Database</Text>
             <Text type="supporting">
-              Permanently delete all transactions and import history. Type "RESET" to confirm.
+              Permanently delete all transactions, customers and import history. Type "RESET" to confirm.
             </Text>
           </VStack>
           <HStack gap={2} align="center">

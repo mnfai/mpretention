@@ -77,6 +77,7 @@ export async function runMigrations(db: Database): Promise<void> {
   `);
 
   await runMigration002(db);
+  await runMigration003(db);
 }
 
 /** Migration 002: retention support (customers table, identity columns, daily_retention view). */
@@ -145,4 +146,96 @@ async function runMigration002(db: Database): Promise<void> {
     FROM transactions t
     GROUP BY year, month, day, t.brand, t.platform
   `);
+}
+
+/**
+ * Per-order source for the summary views. Shopee "Total Pembayaran" and TikTok
+ * "Order Amount" are order-level values repeated on every SKU line of an
+ * order, so summing them per line counted a 3-SKU order's payment 3 times
+ * and made Net GMV larger than Gross. Each order (split by cancelled flag, in
+ * case only some lines were cancelled) is collapsed to one row first.
+ */
+const ORDER_LEVEL_SOURCE = `
+    SELECT
+        brand,
+        platform,
+        order_id,
+        is_cancelled,
+        MIN(created_at)     AS created_at,
+        SUM(qty)            AS qty,
+        SUM(gmv_gross)      AS gmv_gross,
+        MAX(total_payment)  AS total_payment,
+        MAX(is_retention)   AS is_retention
+    FROM transactions
+    GROUP BY platform, order_id, is_cancelled
+`;
+
+/** Bumped whenever the summary views change; tracked in PRAGMA user_version. */
+const VIEWS_VERSION = 3;
+
+/** Migration 003: count Net GMV (order-level payment) once per order instead of once per SKU line. */
+async function runMigration003(db: Database): Promise<void> {
+  const [row] = await db.select<{ user_version: number }[]>("PRAGMA user_version");
+  if ((row?.user_version ?? 0) >= VIEWS_VERSION) return;
+
+  await db.execute("DROP VIEW IF EXISTS daily_summary");
+  await db.execute(`
+    CREATE VIEW daily_summary AS
+    SELECT
+        strftime('%Y', created_at) AS year,
+        strftime('%m', created_at) AS month,
+        strftime('%d', created_at) AS day,
+        brand,
+        platform,
+        SUM(CASE WHEN is_cancelled=0 THEN qty ELSE 0 END) AS product_sold,
+        COUNT(CASE WHEN is_cancelled=0 THEN 1 END) AS total_tx,
+        SUM(CASE WHEN is_cancelled=0 THEN gmv_gross ELSE 0 END) AS gmv_gross,
+        SUM(CASE WHEN is_cancelled=0 THEN total_payment ELSE 0 END) AS gmv_net,
+        ROUND(
+            SUM(CASE WHEN is_cancelled=0 THEN gmv_gross ELSE 0 END)
+            / NULLIF(COUNT(CASE WHEN is_cancelled=0 THEN 1 END), 0),
+        2) AS aov,
+        ROUND(
+            SUM(CASE WHEN is_cancelled=0 THEN gmv_gross ELSE 0 END)
+            / NULLIF(SUM(CASE WHEN is_cancelled=0 THEN qty ELSE 0 END), 0),
+        2) AS rpu,
+        COUNT(CASE WHEN is_cancelled=1 THEN 1 END) AS cancelled_tx,
+        ROUND(
+            COUNT(CASE WHEN is_cancelled=1 THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0),
+        2) AS cancellation_rate
+    FROM (${ORDER_LEVEL_SOURCE})
+    GROUP BY year, month, day, brand, platform
+  `);
+
+  await db.execute("DROP VIEW IF EXISTS daily_retention");
+  await db.execute(`
+    CREATE VIEW daily_retention AS
+    SELECT
+        strftime('%Y', created_at) AS year,
+        strftime('%m', created_at) AS month,
+        strftime('%d', created_at) AS day,
+        brand,
+        platform,
+        SUM(CASE WHEN is_retention=1 AND is_cancelled=0 THEN qty ELSE 0 END) AS retention_product_sold,
+        COUNT(CASE WHEN is_retention=1 AND is_cancelled=0 THEN 1 END) AS retention_tx,
+        COUNT(CASE WHEN is_cancelled=0 THEN 1 END) AS total_tx,
+        ROUND(
+            COUNT(CASE WHEN is_retention=1 AND is_cancelled=0 THEN 1 END) * 100.0
+            / NULLIF(COUNT(CASE WHEN is_cancelled=0 THEN 1 END), 0)
+        , 2) AS retention_rate,
+        SUM(CASE WHEN is_retention=1 AND is_cancelled=0 THEN gmv_gross ELSE 0 END) AS retention_gmv,
+        SUM(CASE WHEN is_retention=1 AND is_cancelled=0 THEN total_payment ELSE 0 END) AS retention_gmv_net,
+        ROUND(
+            SUM(CASE WHEN is_retention=1 AND is_cancelled=0 THEN gmv_gross ELSE 0 END)
+            / NULLIF(COUNT(CASE WHEN is_retention=1 AND is_cancelled=0 THEN 1 END), 0)
+        , 2) AS retention_aov,
+        ROUND(
+            SUM(CASE WHEN is_retention=1 AND is_cancelled=0 THEN gmv_gross ELSE 0 END)
+            / NULLIF(SUM(CASE WHEN is_retention=1 AND is_cancelled=0 THEN qty ELSE 0 END), 0)
+        , 2) AS retention_rpu
+    FROM (${ORDER_LEVEL_SOURCE})
+    GROUP BY year, month, day, brand, platform
+  `);
+
+  await db.execute(`PRAGMA user_version = ${VIEWS_VERSION}`);
 }

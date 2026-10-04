@@ -35,18 +35,43 @@ export async function getDb(): Promise<Database> {
   return dbInstance;
 }
 
-/** Closes the active connection so the underlying file can be replaced. */
+/**
+ * Closes the active connection so the underlying file can be replaced. The
+ * WAL is checkpointed and truncated first: a leftover -wal file next to a
+ * replaced database would be replayed onto it on the next open.
+ */
 export async function closeDb(): Promise<void> {
   if (dbInstance) {
+    await dbInstance.execute("PRAGMA wal_checkpoint(TRUNCATE)");
     await dbInstance.close();
     dbInstance = null;
   }
+}
+
+/**
+ * Writes a consistent snapshot of the live database to `destPath` (which must
+ * not exist yet). Copying mpretention.db directly misses every change still
+ * sitting in the -wal file, which can hold hundreds of MB after a big import.
+ */
+export async function backupDatabaseTo(destPath: string): Promise<void> {
+  const db = await getDb();
+  await db.execute("VACUUM INTO ?", [destPath]);
 }
 
 /** Absolute path to the SQLite database file on disk. */
 export async function getDbFilePath(): Promise<string> {
   const dir = await appConfigDir();
   return join(dir, DB_FILENAME);
+}
+
+/** Latest created_at already stored for a brand+platform, or null when there is none. */
+export async function getLatestCreatedAt(brand: Brand, platform: Platform): Promise<string | null> {
+  const db = await getDb();
+  const rows = await db.select<{ latest: string | null }[]>(
+    "SELECT MAX(created_at) AS latest FROM transactions WHERE brand = ? AND platform = ?",
+    [brand, platform],
+  );
+  return rows[0]?.latest ?? null;
 }
 
 /** Total number of rows in the transactions table. */
@@ -615,10 +640,15 @@ export async function getSummaryTotals(filters: SummaryFilters): Promise<Summary
 // Danger zone
 // ---------------------------------------------------------------------------
 
-/** Wipes all transactions and import history, resetting autoincrement ids. */
+/**
+ * Wipes all transactions, customers and import history, resetting
+ * autoincrement ids. Customers must go too: leftover customers make every
+ * order imported after the reset look like a repeat purchase.
+ */
 export async function resetDatabase(): Promise<void> {
   const db = await getDb();
   await db.execute("DELETE FROM transactions");
+  await db.execute("DELETE FROM customers");
   await db.execute("DELETE FROM import_log");
-  await db.execute("DELETE FROM sqlite_sequence WHERE name IN ('transactions', 'import_log')");
+  await db.execute("DELETE FROM sqlite_sequence WHERE name IN ('transactions', 'customers', 'import_log')");
 }

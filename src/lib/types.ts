@@ -36,6 +36,9 @@ export interface Transaction {
   regency_city: string | null;
 }
 
+/** A parsed file row before it is assigned to a brand (see importer.detectBrandFromRows). */
+export type ParsedRow = Omit<Transaction, "brand">;
+
 /** Match tier used to build a customer_key. Null = Tier 4 (no identity match). */
 export type MatchTier = 1 | 2 | 3 | null;
 

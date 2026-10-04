@@ -7,8 +7,8 @@ import { Switch } from "@astryxdesign/core/Switch";
 import { useFilterStore } from "@/store/filterStore";
 
 const DESCRIPTIONS = {
-  gross: "Gross — GMV based on Total Harga Produk (before payment adjustments).",
-  net: "Net — GMV based on Total Pembayaran (actual amount paid by the customer).",
+  gross: "Gross — product subtotal after discounts (Shopee Subtotal Pesanan / Total Harga Produk, TikTok SKU Subtotal After Discount).",
+  net: "Net — amount the buyer paid per order (Shopee Total Pembayaran, TikTok Order Amount). TikTok's Order Amount includes shipping, so it can exceed Gross.",
 };
 
 export function GmvModeCard() {

@@ -1,18 +1,39 @@
 import { create } from "zustand";
-import type { Brand, Platform } from "@/lib/types";
-import type { ParsedFile } from "@/lib/importer";
+import type { Brand, Platform, SourceType } from "@/lib/types";
+import type { BrandDetection, ParsedFile } from "@/lib/importer";
 
-export type ImportStep = 1 | 2 | 3 | 4;
+export type ImportStep = 1 | 2 | 3;
 
 export interface UploadedFile {
-  file: File;
+  /** Absolute path; also the identity used to ignore a file added twice. */
+  path: string;
+  name: string;
   parsed: ParsedFile;
+  detection: BrandDetection;
+  /** Detected brand, or the one picked by hand when detection was inconclusive. */
+  brand: Brand | null;
 }
 
-export interface ImportResult {
+/** Files imported together: one import_log batch per brand + platform + source type. */
+export interface ImportGroup {
+  key: string;
+  brand: Brand;
+  platform: Platform;
+  sourceType: SourceType;
+  files: UploadedFile[];
+}
+
+export interface GroupResult {
+  key: string;
+  brand: Brand;
+  platform: Platform;
+  filenames: string[];
   rowsImported: number;
   duplicatesSkipped: number;
   cancelledFlagged: number;
+  /** New orders older than the latest one already stored: retention flags need a re-run. */
+  olderThanExisting: boolean;
+  error: string | null;
 }
 
 export interface ImportProgress {
@@ -21,31 +42,50 @@ export interface ImportProgress {
   inserted: number;
   skipped: number;
   cancelled: number;
+  /** Label of the group being imported, e.g. "Amura · Shopee". */
+  groupLabel: string;
 }
 
-const EMPTY_PROGRESS: ImportProgress = { current: 0, total: 0, inserted: 0, skipped: 0, cancelled: 0 };
+const EMPTY_PROGRESS: ImportProgress = {
+  current: 0,
+  total: 0,
+  inserted: 0,
+  skipped: 0,
+  cancelled: 0,
+  groupLabel: "",
+};
+
+/** Groups files that have a brand by brand + platform + source type, Amura first. */
+export function groupFiles(files: UploadedFile[]): ImportGroup[] {
+  const groups = new Map<string, ImportGroup>();
+  for (const f of files) {
+    if (!f.brand) continue;
+    const { platform, sourceType } = f.parsed.profile;
+    const key = `${f.brand}|${platform}|${sourceType}`;
+    const group = groups.get(key);
+    if (group) group.files.push(f);
+    else groups.set(key, { key, brand: f.brand, platform, sourceType, files: [f] });
+  }
+  return [...groups.values()].sort((a, b) => a.key.localeCompare(b.key));
+}
 
 interface ImportStoreState {
   step: ImportStep;
-  brand: Brand | null;
-  platform: Platform | null;
   files: UploadedFile[];
-  error: string | null;
+  errors: string[];
   isParsing: boolean;
   parsingMessage: string;
   isImporting: boolean;
   progress: ImportProgress;
-  result: ImportResult | null;
+  results: GroupResult[] | null;
   importError: string | null;
   setStep: (step: ImportStep) => void;
-  setBrand: (brand: Brand | null) => void;
-  setPlatform: (platform: Platform | null) => void;
   setFiles: (files: UploadedFile[] | ((prev: UploadedFile[]) => UploadedFile[])) => void;
-  setError: (error: string | null) => void;
+  setErrors: (errors: string[]) => void;
   setParsing: (isParsing: boolean, message?: string) => void;
   setIsImporting: (isImporting: boolean) => void;
   setProgress: (progress: ImportProgress) => void;
-  setResult: (result: ImportResult | null) => void;
+  setResults: (results: GroupResult[] | null) => void;
   setImportError: (importError: string | null) => void;
   reset: () => void;
 }
@@ -56,39 +96,33 @@ interface ImportStoreState {
  */
 export const useImportStore = create<ImportStoreState>()((set) => ({
   step: 1,
-  brand: null,
-  platform: null,
   files: [],
-  error: null,
+  errors: [],
   isParsing: false,
   parsingMessage: "",
   isImporting: false,
   progress: EMPTY_PROGRESS,
-  result: null,
+  results: null,
   importError: null,
   setStep: (step) => set({ step }),
-  setBrand: (brand) => set({ brand }),
-  setPlatform: (platform) => set({ platform }),
   setFiles: (files) =>
     set((state) => ({ files: typeof files === "function" ? files(state.files) : files })),
-  setError: (error) => set({ error }),
+  setErrors: (errors) => set({ errors }),
   setParsing: (isParsing, message = "") => set({ isParsing, parsingMessage: message }),
   setIsImporting: (isImporting) => set({ isImporting }),
   setProgress: (progress) => set({ progress }),
-  setResult: (result) => set({ result }),
+  setResults: (results) => set({ results }),
   setImportError: (importError) => set({ importError }),
   reset: () =>
     set({
       step: 1,
-      brand: null,
-      platform: null,
       files: [],
-      error: null,
+      errors: [],
       isParsing: false,
       parsingMessage: "",
       isImporting: false,
       progress: EMPTY_PROGRESS,
-      result: null,
+      results: null,
       importError: null,
     }),
 }));

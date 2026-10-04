@@ -84,9 +84,10 @@ export function DateRangeFilter({ dateFrom, dateTo, onChange }: DateRangeFilterP
     setOpen(false);
   }
 
-  const label = isSameDay(new Date(dateFrom), new Date(dateTo))
-    ? format(new Date(dateFrom), DISPLAY_DATE)
-    : `${format(new Date(dateFrom), DISPLAY_DATE)} – ${format(new Date(dateTo), DISPLAY_DATE)}`;
+  // parseISO reads "yyyy-MM-dd" as local time; new Date() would read it as UTC midnight.
+  const label = isSameDay(parseISO(dateFrom), parseISO(dateTo))
+    ? format(parseISO(dateFrom), DISPLAY_DATE)
+    : `${format(parseISO(dateFrom), DISPLAY_DATE)} – ${format(parseISO(dateTo), DISPLAY_DATE)}`;
 
   const gridStart = startOfWeek(startOfMonth(visibleMonth));
   const gridEnd = endOfWeek(endOfMonth(visibleMonth));

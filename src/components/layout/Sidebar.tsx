@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useImportStore } from "@/store/importStore";
+import { useUiStore } from "@/store/uiStore";
 import { useAppVersion } from "@/hooks/useAppVersion";
 
 const NAV_ITEMS = [
@@ -31,7 +32,9 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const appVersion = useAppVersion();
   const wizardStep = useImportStore((s) => s.step);
   const isImporting = useImportStore((s) => s.isImporting);
-  const showResumeBanner = wizardStep > 1 && wizardStep < 4 && location.pathname !== "/import";
+  const showDashboard = useUiStore((s) => s.showDashboard);
+  const navItems = NAV_ITEMS.filter((item) => showDashboard || item.to !== "/dashboard");
+  const showResumeBanner = wizardStep > 1 && wizardStep < 3 && location.pathname !== "/import";
 
   return (
     <aside
@@ -68,7 +71,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
             className="absolute inset-0 z-10 cursor-not-allowed rounded-md bg-[#1E293B]/60"
           />
         )}
-        {NAV_ITEMS.map(({ to, label, icon: Icon }) => (
+        {navItems.map(({ to, label, icon: Icon }) => (
           <NavLink
             key={to}
             to={to}

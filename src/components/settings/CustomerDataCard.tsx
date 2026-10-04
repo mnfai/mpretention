@@ -9,7 +9,8 @@ import { Button } from "@astryxdesign/core/Button";
 import { Divider } from "@astryxdesign/core/Divider";
 import { ProgressBar } from "@astryxdesign/core/ProgressBar";
 import { formatNumber } from "@/lib/formatters";
-import { getCustomerStats, reResolveAllCustomers } from "@/lib/db";
+import { getCustomerStats } from "@/lib/db";
+import { useReResolve } from "@/hooks/useReResolve";
 import type { CustomerStats } from "@/lib/types";
 
 function Stat({ label, value }: { label: string; value: number | undefined }) {
@@ -23,22 +24,15 @@ function Stat({ label, value }: { label: string; value: number | undefined }) {
 
 export function CustomerDataCard() {
   const [stats, setStats] = useState<CustomerStats | null>(null);
-  const [isResolving, setIsResolving] = useState(false);
-  const [progress, setProgress] = useState({ current: 0, total: 0 });
+  const { isResolving, progress, error, run } = useReResolve();
 
   useEffect(() => {
     getCustomerStats().then(setStats);
   }, []);
 
   async function handleReResolve() {
-    setIsResolving(true);
-    setProgress({ current: 0, total: 0 });
-    try {
-      const result = await reResolveAllCustomers((current, total) => setProgress({ current, total }));
-      setStats(result);
-    } finally {
-      setIsResolving(false);
-    }
+    const result = await run();
+    if (result) setStats(result);
   }
 
   const percent = progress.total > 0 ? Math.round((progress.current / progress.total) * 100) : 0;
@@ -80,6 +74,8 @@ export function CustomerDataCard() {
             onClick={handleReResolve}
           />
         </HStack>
+
+        {error && <Text type="supporting">Re-run failed: {error}</Text>}
 
         {isResolving && (
           <VStack gap={1}>
